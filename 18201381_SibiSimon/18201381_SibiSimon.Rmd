@@ -1,0 +1,418 @@
+---
+title: "Advanced R Final Project"
+author: "Sibi Simon - 18201381"
+date: "1 September 2019"
+output: html_document
+runtime: shiny
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# Including libraries
+library(readr)
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(ggiraph)
+library(viridis)
+library(gganimate)
+library(rstan)
+library(shiny)
+
+# Setting seed to get an unchanged output
+set.seed(18201381)
+```
+
+
+
+#### Dataset
+
+The dataset consist of details of all discovered extra-solar planets. The details of columns are described below.
+
+* 1: Primary identifier of planet
+* 2: Binary flag [0=no known stellar binary companion; 1=P-type binary (circumbinary); 2=S-type binary; 3=orphan planet (no star)
+* 3: Planetary mass [Jupiter masses]
+* 4: Radius [Jupiter radii]
+* 5: Period [days]
+* 6: Semi-major axis [Astronomical Units]
+* 7: Eccentricity
+* 8: Periastron [degree]
+* 9: Longitude [degree]
+* 10: Ascending node [degree]
+* 11: Inclination [degree]
+* 12: Surface or equilibrium temperature [K]
+* 13: Age [Gyr]
+* 14: Discovery method
+* 15: Discovery year [yyyy]
+* 16: Last updated [yy/mm/dd]
+* 17: Right ascension [hh mm ss]
+* 18: Declination [+/-dd mm ss]
+* 19: Distance from Sun [parsec]
+* 20: Host star mass [Solar masses]
+* 21: Host star radius [Solar radii]
+* 22: Host star metallicity [log relative to solar]
+* 23: Host star temperature [K]
+* 24: Host star age [Gyr]
+* 25: A list of lists the planet is on
+
+
+
+#### Question 1
+
+
+```{r message=FALSE, warning=FALSE}
+# Reading data using read_csv function
+exoplanet_data = read_csv("exo_data.csv")
+
+# Converting columns to approproate type as mentioned
+exoplanet_data %<>% mutate(year = as.integer(year), meth = as.factor(meth), flag = as.factor(flag))
+```
+
+
+
+#### Question 2
+
+
+```{r}
+# Avoiding the exoplanet with unknown method of discovery
+exoplanet_data %<>% filter(!is.na(meth))
+```
+
+
+
+#### Question 3
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+# Using ggplot to plot histogram of log distance highlighted by nethod of discovery
+ggplot(exoplanet_data, aes(x=log(dist), fill=meth)) +
+  geom_histogram(alpha = 0.5, position="dodge") +
+  labs(title="Histogram of distance by method of discovery", x = "Distance") +   # Addding labels
+  theme_bw()                                                                     # Adding theme
+```
+
+
+
+#### Question 4
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Adding the additional column to dataset containig the url to route when clicked
+# Url will be base url + id 
+exoplanet_data$onclick =  sprintf("window.open(\"%s%s\")",
+                        "http://www.openexoplanetcatalogue.com/planet/",
+                         as.character(exoplanet_data$id))
+
+# Ploting log distance vs log mass scatterplot and adding interactive feature to it
+# The plot is seperated based on the method of discovery
+gg_planet = ggplot(exoplanet_data, aes(x = log(dist),
+                    y = log(mass), color = meth)) + 
+                    geom_point_interactive(aes(data_id = id,           
+                    tooltip = id, onclick = onclick)) +                # Adding interactive point
+                    facet_grid(. ~ meth, scales = 'free_x') +          # Seperating by method
+                    labs(title="Distance vs Mass scatter plot",        # Adding labels
+                         x = "Distance", y="Mass") +
+                    theme_bw() +                                       # Selecting theme
+                    theme(legend.position = 'None')                    # Removing legend
+
+# Adding hover and interactive feature
+ggiraph(code = print(gg_planet))
+```
+
+
+
+#### Question 5
+
+
+```{r, warning=FALSE, message=FALSE}
+# Rename the column name radius into jupiter_radius
+exoplanet_data <- rename(exoplanet_data, jupiter_radius = 'radius')
+
+# Computing earth radius
+exoplanet_data$earth_radius <- exoplanet_data$jupiter_radius * 11.2
+```
+
+
+
+#### Question 6
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+# Filtering data without NA values in period or earth radius column
+exo_planet_data_cluster <- exoplanet_data[complete.cases(exoplanet_data[, c("period", "earth_radius")]),]
+
+# Data with NA in period or earth_radius
+exo_planet_data_with_na <- exoplanet_data[!complete.cases(exoplanet_data[, c("period", "earth_radius")]),]
+
+# Clustering using kmeans with 4 centers and nstart 15
+km_cl <- kmeans(log(exo_planet_data_cluster %>% select(period, earth_radius)), 
+                4, nstart = 15)
+```
+
+Here N start 15 is given to converge to global minima rather than the local minima which will give better result than just running once.
+
+
+
+#### Question 7
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Adding cluster as a column in dataset 
+exo_planet_data_cluster$type <- km_cl$cluster
+# Converting to factor
+exo_planet_data_cluster$type <- as.factor(exo_planet_data_cluster$type)
+
+# Plotting the clustered data
+ggplot(data=exo_planet_data_cluster, 
+       aes(x=log(period), y=log(earth_radius), color=type)) + 
+       geom_point() + labs(title="Clustering on Peroid and Earth radius",
+                            x = "Period", y="Earth radius") +            # Adding labels  
+       theme_bw()                                                        # Adding theme
+
+# Adding an additional factor unknown to type column NA dataset created above
+exo_planet_data_with_na$type <- 'unknown'
+```
+
+
+**Comparing with the given picture we can encode the names as given below.**
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Since we are setting the seed the levels will be in the same order
+levels(exo_planet_data_cluster$type) <- c('hot_jupiters', 'rocky', 'others', 'cold_gas_giants')
+
+# Cluster plot with labels
+ggplot(data=exo_planet_data_cluster, aes(x=log(period), y=log(earth_radius), color=type)) + 
+  geom_point() +                                                        # Adding points
+  stat_ellipse(geom = "polygon", alpha = 1/2, aes(fill = type)) +       # Drawing ellipse around clusters
+  labs(title="Clustering on Peroid and Earth radius",
+              x = "Period", y="Earth radius") +                         # Adding labels
+  theme_bw()                                                            # Adding theme
+```
+
+
+
+#### Question 8
+
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Binding the two dataset (data used for cluster and data with type unknown) to single one to avoid data loss
+exoplanet_cmplt_data <- rbind(exo_planet_data_cluster, exo_planet_data_with_na)
+
+# Histogram plot
+ggplot(exoplanet_cmplt_data, aes(x=log(mass), fill=type)) +
+  geom_histogram(colour='black') +                         # Histogram
+  labs(title="Histogram of mass by type", x = "Mass") +             # Adding labels
+  theme_bw()                                                        # Adding theme
+
+# Voilin plot
+ggplot(exoplanet_cmplt_data, aes(x=type, y=log(mass), fill=type)) + 
+  geom_violin(trim=FALSE,  color="black")+
+  labs(title="Voilin plot of mass by type",x="Type", y = "Mass")+   # Adding labels
+  theme_bw()                                                        # Adding theme
+```
+
+
+
+#### Question 9
+
+
+```{r, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Functing for finding the total seconds value given the a string
+find_second_val <- function(time){
+  as.numeric(time[1]) * 3600 + as.numeric(time[2]) * 60 + as.numeric(time[3])
+}
+
+# Splitting the r_asc and decl column with space along each row and applying converting function
+r_asc = lapply(strsplit(exoplanet_cmplt_data$r_asc, " "), find_second_val)
+decl = lapply(strsplit(exoplanet_cmplt_data$decl, " "), find_second_val)
+
+# Creating tibble with the two columns
+celestial_data = tibble(r_asc=unlist(r_asc), decl=unlist(decl))
+
+# Scatter plot between the tansformed data
+ggplot(
+  celestial_data,
+  aes(r_asc, decl)) +                                                    
+  geom_point() +                                                         # Adding points
+  labs(title="Celestial Map",x="Right ascension", y = "Declination") +   # Adding labels
+  theme_bw()                                                             # Adding theme
+```
+
+
+#### Question 10
+
+
+```{r, warning=FALSE, message=FALSE}
+# Creating time series data
+# Getting group by frequency
+time_series_data = exoplanet_cmplt_data %>% group_by(meth, year) %>% summarise(Freq=n()) %>% na.omit()
+
+# Finding cumulative frequency up to that year
+time_series_data %<>% group_by(meth) %>% mutate(cum_freq = cumsum(Freq))
+
+# Time series plot for exoplanet discovered till year
+ggplot(
+  time_series_data,
+  aes(year, cum_freq, color=meth)) +
+  geom_line() +
+  labs(title = 'Times series plot for exoplanet discoverd', 
+       x = 'Year', y = 'Frequency of exoplanet discovered till year') +               # Adding labels
+  facet_wrap (~ meth, scales = 'free') +
+  transition_reveal(year) +                                                           # Time series line
+  theme_bw() +                                                                        # Adding theme
+  theme(legend.position = 'None')                                                     # Removing labels
+```
+
+
+#### Question 11
+```{r, warning=FALSE, message=FALSE}
+# Define UI for application that draws a histogram
+ui <- fluidPage(
+   
+   # Application title
+   titlePanel("Exoplanet Scatterplot"),
+   
+   
+   # Sidebar with a slider input for year and drop down menu for selecting exoplanet type
+   sidebarLayout(
+      sidebarPanel(
+         helpText("Filter data by selecting year and type of exoplanet"),
+         sliderInput("year",
+                     "Select Year:",
+                     min = 2009,
+                     max = 2018,
+                     value = 2018,
+                     sep=""),
+         selectInput("type", "Select Type:", 
+                     choices = list("All" = "all", "Hot Jupiters" = "hot_jupiters",
+                                    "Rocky" = "rocky", "Cold Gas Giants" = "cold_gas_giants", 
+                                    "Unknown" = "unknown"), selected = "all")
+      ),
+      
+      # Show a plot of the generated distribution
+      mainPanel(
+         plotOutput("distPlot")
+      )
+   )
+)
+
+# Define server logic required to draw a scatter plot
+server <- function(input, output) {
+   
+   output$distPlot <- renderPlot({
+      
+      # Filtering data according to the year
+      filter_data <- exoplanet_cmplt_data %>% filter(year == input$year)
+      
+      # Checking if the type is all if yes plotting all points
+      if (input$type == "all") {
+        ggplot(filter_data, aes(x=log(mass), y=log(dist), color=type)) + 
+          geom_point() +
+          labs(title = "Mass Vs Distance Scatter Plot", x="Mass", y="Distance") +
+          theme_bw()
+      }
+      
+      # If type is selected filtering data according to the corresponding type
+      else {
+        plt_title <- paste("Mass Vs Distance scatter plot for", input$type)
+        filter_data <- exoplanet_cmplt_data %>% filter(year == input$year, type == input$type)
+        ggplot(filter_data, aes(x=log(mass), y=log(dist))) + 
+          geom_point() +
+          labs(title = plt_title, x="Mass", y="Distance") +
+          theme_bw()
+      }
+   })
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server, options = list(height = 500))
+```
+
+
+
+#### Question 12
+
+
+```{r, warning=FALSE, message=FALSE}
+
+# Setting options and cores
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+
+# Creating model data
+model_data <- exoplanet_cmplt_data  %>%  select(period, host_mass, host_temp, axis) %>% na.omit()
+model_data <- log(model_data)
+
+# Creating matrix for predictors
+x <-model_data %>% select(host_mass, host_temp, axis) %>% as.matrix()
+
+# Regression data list
+exoplanet_data_lr = list(N = nrow(model_data),   # Number of rows
+                     K = 3,                      # Number of predictors
+                     x = x,                      # Covariates matrix
+                     y = model_data$period)      # Response variable
+
+# Maximum likelihood version
+# Stan model
+stan_model_lr = stan_model('lin_reg.stan')
+stan_run_lr_ml = optimizing(stan_model_lr, data = exoplanet_data_lr)
+
+# Printing summary
+print(stan_run_lr_ml)
+```
+
+
+
+#### Question 13
+
+
+```{r, warning=FALSE, message=FALSE}
+
+
+# Sampling version
+# Updated stan model
+stan_model_sampling = stan_model('sampling_reg.stan')
+stan_run_sampling = sampling(stan_model_sampling, data = exoplanet_data_lr)
+
+# printing summary
+print(stan_run_sampling)
+```
+
+
+
+#### Question 14
+
+##### Parameter, Density and Trace Plot
+
+```{r, warning=FALSE, message=FALSE}
+# Plot for parameters 
+plot(stan_run_sampling)
+
+# Density plot
+stan_dens(stan_run_sampling)
+
+# Trace plot
+traceplot(stan_run_sampling)
+```
+
+
+The first plot shows thw variance in value of parameters with the mena value and confidence. **Density Plot :** The peaks of a density Plot help display where values are concentrated over the interval. So, here the density plot shows concentrated values of the parameters alpha (Intercept) and beta. **Trace Plot :** Shows variation of parameters in each iteration.
+
+
+#### Question 15
+
+The shiny app is integrated to the R Markdown by inline using the shinyApp(). And we can give runtime as Shiny in Rmarkdown.
+
+
+
+
+
+
+
+
